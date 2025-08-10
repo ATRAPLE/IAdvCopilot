@@ -92,6 +92,28 @@ export default function Home() {
   };
 
   // Nova função para enviar à IA após confirmação
+  // Função de polling para buscar atualização do JSON
+  const pollForImageAnalysis = async (downloadUrl: string, maxTries = 20, interval = 3000) => {
+    let tries = 0;
+    while (tries < maxTries) {
+      try {
+        const res = await axios.get(downloadUrl);
+        if (res.data && res.data.analise_imagem_pagina2) {
+          setData(res.data);
+          setStatus("Processamento concluído! Análise de imagem disponível.");
+          return;
+        } else {
+          setData(res.data); // Atualiza o JSON bruto mesmo sem a análise
+        }
+      } catch (e) {
+        // Ignora erros de polling
+      }
+      await new Promise((resolve) => setTimeout(resolve, interval));
+      tries++;
+    }
+    setStatus("Processamento concluído! (Análise de imagem não retornou a tempo)");
+  };
+
   const handleSendToIA = async () => {
     if (!preIA) return;
     setLoading(true);
@@ -100,14 +122,22 @@ export default function Home() {
     try {
       const res = await axios.post(
         "http://localhost:8000/api/process-ia/",
-        { prompt: preIA.prompt, secoes: preIA.secoes },
+        {
+          prompt: preIA.prompt,
+          secoes: preIA.secoes,
+          imagemPagina2: preIA.imagemPagina2 || null,
+        },
         { headers: { "Content-Type": "application/json" } }
       );
       setData(res.data.data);
       setDownloadUrl(res.data.download_url);
       setTab(0);
-      setStatus("Processamento concluído!");
+      setStatus("Processamento concluído! (Aguardando análise de imagem...)");
       setShowPreIA(false);
+      // Inicia polling se houver download_url
+      if (res.data.download_url) {
+        pollForImageAnalysis(res.data.download_url);
+      }
     } catch (err: any) {
       setError("Erro ao processar com IA.");
       setStatus("");
@@ -382,9 +412,63 @@ export default function Home() {
           </Box>
         )}
         <Tabs value={tab} onChange={handleTabChange} sx={{ mb: 2 }}>
-          <Tab label="Visualização Estruturada" />
-          <Tab label="JSON Bruto" />
+          <Tab label="Visualização" />
+          <Tab label="JSON" />
+          <Tab label="Página 2 (Imagem)" />
+          <Tab label="Imagem->texto via IA" />
+          <Tab label="Custos IA" />
         </Tabs>
+        <TabPanel value={tab} index={3}>
+          {data && data.analise_imagem_pagina2 ? (
+            <Box sx={{ p: 2, background: "#f3e5f5", borderRadius: 2 }}>
+              <Typography variant="h6" sx={{ mb: 1 }}>Resultado da Análise de Imagem via IA</Typography>
+              <Typography sx={{ whiteSpace: "pre-line" }}>{data.analise_imagem_pagina2}</Typography>
+            </Box>
+          ) : (
+            <Typography>Nenhum resultado de análise de imagem disponível.</Typography>
+          )}
+        </TabPanel>
+        <TabPanel value={tab} index={4}>
+          {data && data.custos_ia ? (
+            <Box sx={{ p: 2, background: '#e3f2fd', borderRadius: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>Custos do Processamento IA</Typography>
+              {/* Custos do resumo de texto */}
+              <Typography variant="subtitle1" sx={{ mt: 1, mb: 1 }}>Resumo de Texto (IA)</Typography>
+              {data.custos_ia.texto && !data.custos_ia.texto.erro ? (
+                <>
+                  <Typography><b>Tokens de entrada (prompt):</b> {data.custos_ia.texto.prompt_tokens}</Typography>
+                  <Typography><b>Tokens de saída (resposta):</b> {data.custos_ia.texto.completion_tokens}</Typography>
+                  <Typography><b>Total de tokens:</b> {data.custos_ia.texto.total_tokens}</Typography>
+                  <Typography><b>Custo entrada (USD):</b> ${data.custos_ia.texto.custo_entrada_usd}</Typography>
+                  <Typography><b>Custo saída (USD):</b> ${data.custos_ia.texto.custo_saida_usd}</Typography>
+                  <Typography><b>Custo total (USD):</b> <b>${data.custos_ia.texto.custo_total_usd}</b></Typography>
+                </>
+              ) : (
+                <Typography color="error">{data.custos_ia.texto?.erro || 'Não disponível.'}</Typography>
+              )}
+              {/* Custos da análise de imagem */}
+              <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>Imagem-&gt;Texto (IA Multimodal)</Typography>
+              {data.custos_ia.imagem && !data.custos_ia.imagem.erro ? (
+                <>
+                  <Typography><b>Tamanho da imagem:</b> {data.custos_ia.imagem.imagem_kb} KB ({data.custos_ia.imagem.imagem_bytes} bytes)</Typography>
+                  <Typography><b>Tokens de entrada (prompt):</b> {data.custos_ia.imagem.prompt_tokens}</Typography>
+                  <Typography><b>Tokens de saída (resposta):</b> {data.custos_ia.imagem.completion_tokens}</Typography>
+                  <Typography><b>Total de tokens:</b> {data.custos_ia.imagem.total_tokens}</Typography>
+                  <Typography><b>Custo entrada (USD):</b> ${data.custos_ia.imagem.custo_entrada_usd}</Typography>
+                  <Typography><b>Custo saída (USD):</b> ${data.custos_ia.imagem.custo_saida_usd}</Typography>
+                  <Typography><b>Custo total (USD):</b> <b>${data.custos_ia.imagem.custo_total_usd}</b></Typography>
+                </>
+              ) : (
+                <Typography color="error">{data.custos_ia.imagem?.erro || 'Não disponível.'}</Typography>
+              )}
+              {/* Custo total geral */}
+              <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}><b>Custo Total IA</b></Typography>
+              <Typography><b>Total (USD):</b> <b>${data.custos_ia.custo_total_ia_usd || data.custos_ia.custo_total_usd || '-'}</b></Typography>
+            </Box>
+          ) : (
+            <Typography>Nenhuma informação de custo disponível.</Typography>
+          )}
+        </TabPanel>
         <TabPanel value={tab} index={0}>
           {data ? (
             <Box>
@@ -417,6 +501,13 @@ export default function Home() {
                   <li>-</li>
                 )}
               </ul>
+              {/* Exibir resultado da análise multimodal da imagem */}
+              {data.analise_imagem_pagina2 && (
+                <Box sx={{ mt: 3, p: 2, background: "#f3e5f5", borderRadius: 2 }}>
+                  <Typography variant="h6" sx={{ mb: 1 }}>Análise da Imagem da Página 2 (IA Multimodal)</Typography>
+                  <Typography sx={{ whiteSpace: "pre-line" }}>{data.analise_imagem_pagina2}</Typography>
+                </Box>
+              )}
               {downloadUrl && (
                 <Button
                   sx={{ mt: 2 }}
@@ -451,6 +542,20 @@ export default function Home() {
             <Typography>
               Envie um PDF para visualizar o JSON extraído.
             </Typography>
+          )}
+        </TabPanel>
+        <TabPanel value={tab} index={2}>
+          {((preIA && preIA.imagemPagina2) || (data && data.imagemPagina2)) ? (
+            <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center">
+              <Typography variant="h6" sx={{ mb: 2 }}>Página 2 do PDF (Imagem)</Typography>
+              <img
+                src={`http://localhost:8000/api/pagina2-img/?path=${encodeURIComponent(preIA?.imagemPagina2 || data?.imagemPagina2)}`}
+                alt="Página 2 do PDF"
+                style={{ maxWidth: "100%", border: "1px solid #ccc" }}
+              />
+            </Box>
+          ) : (
+            <Typography>Imagem da página 2 não disponível.</Typography>
           )}
         </TabPanel>
       </Paper>
